@@ -1,11 +1,1471 @@
-<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Porra La Liga 2026/27</title><style>:root{--bg:#f4f6fa;--card:#fff;--ink:#172033;--muted:#667085;--line:#e4e7ec;--blue:#2563eb;--green:#16834b;--red:#b42318;--gold:#a66b00}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{background:#101828;color:#fff;padding:24px max(18px,calc((100% - 1050px)/2))}header h1{margin:0 0 4px;font-size:28px}header p{margin:0;color:#c7ced9}.wrap{max-width:1050px;margin:22px auto;padding:0 14px}.card{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:20px;margin-bottom:18px;box-shadow:0 4px 15px #1018280b}.row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.between{justify-content:space-between}button,input,select{font:inherit;padding:10px 12px;border:1px solid #d8dee8;border-radius:9px}button{background:var(--blue);color:#fff;border:0;font-weight:700;cursor:pointer}button.secondary{background:#eef2ff;color:#2449b8}.hidden{display:none}.muted{color:var(--muted);font-size:13px}.notice{background:#fff8e6;color:#7a4b00;padding:12px 14px;border-radius:10px;margin:14px 0}.match{display:grid;grid-template-columns:1fr 58px 58px 1fr 155px;gap:9px;align-items:center;padding:13px 0;border-bottom:1px solid #edf0f4}.away{text-align:right}.score{width:58px;text-align:center;font-weight:800}.status{text-align:center;font-size:12px;font-weight:800}.future{color:var(--muted)}.live{color:var(--red)}.final{color:var(--green)}.exact{color:var(--green);font-weight:900}.one{color:var(--gold);font-weight:900}.empty{text-align:center;padding:28px;color:var(--muted)}table{width:100%;border-collapse:collapse}th,td{padding:11px 8px;border-bottom:1px solid #edf0f4;text-align:center}th:nth-child(2),td:nth-child(2){text-align:left}.tabs{display:flex;gap:8px;margin-bottom:18px}.tabs button{flex:1}@media(max-width:700px){.match{grid-template-columns:1fr 50px 50px 1fr}.match .status{grid-column:1/-1}.score{width:50px;padding:8px 3px}}</style></head><body><header><h1>⚽ Porra La Liga 2026/27</h1><p>Marcador exacto = 3 puntos · Resultado correcto = 1 punto · Fallo = 0</p></header><div class="wrap"><div id="login" class="card"><h2>👋 Entra en la porra</h2><p class="muted">Escribe tu nombre. Todos los jugadores usan esta misma web.</p><div class="row"><input id="name" maxlength="30" placeholder="Tu nombre"><button onclick="enter()">Entrar</button></div></div><div id="app" class="hidden"><div class="tabs"><button onclick="tab('games',this)">⚽ Jornada</button><button onclick="tab('ranking',this)">🏆 Clasificación</button><button class="secondary" onclick="changePlayer()">Cambiar jugador</button></div><section id="games"><div class="card"><div class="row between"><div><h2 id="roundTitle">Jornada</h2><span id="playerLabel" class="muted"></span></div><select id="round" onchange="render()"></select></div><div id="syncMessage" class="muted" style="margin-top:8px"></div><div class="notice">🔒 Las predicciones se bloquean automáticamente al comenzar cada partido.</div><div id="matches"></div></div></section><section id="ranking" class="hidden"><div class="card"><h2>🏆 Clasificación</h2><div id="standings"></div></div></section></div></div><script>
-const SUPABASE_URL="https://mmrctzpiyycgoiqldtlg.supabase.co",SUPABASE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1tcmN0enBpeXljZ29pcWxkdGxnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcxNDg4OTMsImV4cCI6MjEwMjcyNDg5M30.1VXHbFRoTBGpHcQJHU30b1DjVWoUpkul4CjzxGoxYhs",let player=localStorage.getItem("porra_player")||"",matches=[],currentRound=1;
-async function api(path,opts={}){const r=await fetch(SUPABASE_URL+path,{...opts,headers:{apikey:SUPABASE_KEY,Authorization:"Bearer "+SUPABASE_KEY,"Content-Type":"application/json",...(opts.headers||{})}});if(!r.ok)throw Error(await r.text());return r.json()}
-function esc(x){return String(x??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]))}function enter(){const n=document.getElementById("name").value.trim();if(!n)return alert("Escribe tu nombre.");player=n;localStorage.setItem("porra_player",n);start()}function start(){document.getElementById("login").classList.add("hidden");document.getElementById("app").classList.remove("hidden");document.getElementById("playerLabel").textContent="Jugador: "+player;boot()}
-async function boot(){try{await load();await render();setInterval(async()=>{try{await load();await render()}catch(e){}},60000)}catch(e){msg("Error: "+e.message);try{await load();await render()}catch(_){}}}async function load(){matches=await api("/rest/v1/matches?select=*&order=matchday.asc,utc_date.asc");buildRounds()}
-async function syncRelevant(){if(syncing)return;syncing=true;try{if(!matches.length){await invoke({});return}const now=Date.now(),rs=[...new Set(matches.filter(m=>new Date(m.utc_date)>now-172800000&&new Date(m.utc_date)<now+864000000).map(m=>m.matchday))];if(!rs.length){const n=matches.find(m=>new Date(m.utc_date)>now);if(n)rs.push(n.matchday)}for(const r of rs.slice(0,3))await invoke({round:r});msg("Actualizado: "+new Date().toLocaleTimeString("es-ES"))}catch(e){msg("No se pudo actualizar SofaScore: "+e.message)}finally{syncing=false}}function msg(x){document.getElementById("syncMessage").textContent=x}
-function outcome(h,a){return h>a?"H":h<a?"A":"D"}function points(p,m){if(!p||m.home_score===null||m.away_score===null)return null;if(p.home===m.home_score&&p.away===m.away_score)return 3;return outcome(p.home,p.away)===outcome(m.home_score,m.away_score)?1:0}function locked(m){return new Date(m.utc_date)<=new Date()||["IN_PLAY","FINISHED","CANCELED","POSTPONED"].includes(m.status)}function state(m){if(m.status==="FINISHED")return'<span class="final">🟢 FINAL</span>';if(m.status==="IN_PLAY")return'<span class="live">🔴 EN DIRECTO</span>';if(m.status==="POSTPONED")return'<span class="future">⚪ APLAZADO</span>';if(m.status==="CANCELED")return'<span class="future">⚪ CANCELADO</span>';return'<span class="future">⚪ '+new Date(m.utc_date).toLocaleString("es-ES",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})+'</span>'}
-async function preds(ids){if(!ids.length)return[];return api("/rest/v1/predictions?select=*&player=eq."+encodeURIComponent(player)+"&match_id=in.("+ids.join(",")+")")}async function render(){const r=Number(document.getElementById("round").value||currentRound),ms=matches.filter(m=>m.matchday===r);document.getElementById("roundTitle").textContent="Jornada "+r;if(!ms.length){document.getElementById("matches").innerHTML='<div class="empty">Esta jornada todavía no tiene partidos.</div>';return}const ps=await preds(ms.map(m=>m.id)),map=Object.fromEntries(ps.map(p=>[p.match_id,p]));document.getElementById("matches").innerHTML=ms.map(m=>{const p=map[m.id],lock=locked(m),pt=points(p?{home:p.home_pred,away:p.away_pred}:null,m);return`<div class="match"><div>${esc(m.home_team)}</div><input id="h-${m.id}" class="score" type="number" min="0" value="${p?.home_pred??""}" ${lock?"disabled":""} onchange="savePrediction(${m.id})"><input id="a-${m.id}" class="score" type="number" min="0" value="${p?.away_pred??""}" ${lock?"disabled":""} onchange="savePrediction(${m.id})"><div class="away">${esc(m.away_team)}</div><div class="status">${state(m)}${m.home_score!==null?`<br><b>${m.home_score} - ${m.away_score}</b>`:""}<br>${pt===3?'<span class="exact">+3 exacto</span>':pt===1?'<span class="one">+1 resultado</span>':pt===0?'<span>0 puntos</span>':lock?'🔒 Bloqueada':''}</div></div>`}).join("")}
-async function savePrediction(id){const m=matches.find(x=>x.id===id);if(!m||locked(m))return;const h=document.getElementById("h-"+id).value,a=document.getElementById("a-"+id).value;if(h===""||a==="")return;const r=await fetch(SUPABASE_URL+"/rest/v1/predictions?on_conflict=match_id,player",{method:"POST",headers:{apikey:SUPABASE_KEY,Authorization:"Bearer "+SUPABASE_KEY,"Content-Type":"application/json",Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify({match_id:id,player,home_pred:Number(h),away_pred:Number(a),updated_at:new Date().toISOString()})});if(!r.ok)alert("No se pudo guardar la predicción.");await render()}
-async function ranking(){const[ps,ms]=await Promise.all([api("/rest/v1/predictions?select=*"),api("/rest/v1/matches?select=*")]),by=Object.fromEntries(ms.map(m=>[m.id,m])),tot={};ps.forEach(p=>{const v=points({home:p.home_pred,away:p.away_pred},by[p.match_id]);if(v!==null)tot[p.player]=(tot[p.player]||0)+v});const a=Object.entries(tot).sort((x,y)=>y[1]-x[1]);document.getElementById("standings").innerHTML=a.length?`<table><tr><th>#</th><th>Jugador</th><th>Puntos</th></tr>${a.map((x,i)=>`<tr><td>${i+1}</td><td>${i===0?"🏆 ":""}${esc(x[0])}</td><td><b>${x[1]}</b></td></tr>`).join("")}</table>`:'<div class="empty">Todavía no hay puntos.</div>'}function tab(id,b){document.getElementById("games").classList.toggle("hidden",id!=="games");document.getElementById("ranking").classList.toggle("hidden",id!=="ranking");if(id==="ranking")ranking();else render()}function changePlayer(){localStorage.removeItem("porra_player");location.reload()}if(player){document.getElementById("name").value=player;start()}
-</script></body></html>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Porra La Liga 2026/27</title>
+
+<style>
+:root{
+  --blue:#2563eb;
+  --blue-dark:#172554;
+  --bg:#f1f5f9;
+  --card:#ffffff;
+  --text:#172033;
+  --muted:#64748b;
+  --green:#16a34a;
+  --yellow:#f59e0b;
+  --red:#dc2626;
+  --border:#e2e8f0;
+}
+
+*{
+  box-sizing:border-box;
+}
+
+body{
+  margin:0;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;
+  background:var(--bg);
+  color:var(--text);
+}
+
+header{
+  background:var(--blue-dark);
+  color:white;
+  padding:28px 20px;
+}
+
+.header-inner{
+  max-width:1100px;
+  margin:auto;
+}
+
+header h1{
+  margin:0 0 5px;
+  font-size:30px;
+}
+
+header p{
+  margin:0;
+  opacity:.85;
+}
+
+.container{
+  max-width:1100px;
+  margin:22px auto;
+  padding:0 15px;
+}
+
+.tabs{
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr;
+  gap:8px;
+  margin-bottom:18px;
+}
+
+.tab{
+  border:0;
+  border-radius:10px;
+  padding:13px;
+  font-size:16px;
+  font-weight:700;
+  cursor:pointer;
+  background:#dbeafe;
+  color:#1e40af;
+}
+
+.tab.active{
+  background:var(--blue);
+  color:white;
+}
+
+.card{
+  background:var(--card);
+  border-radius:15px;
+  box-shadow:0 3px 14px rgba(15,23,42,.07);
+  overflow:hidden;
+}
+
+.card-header{
+  padding:20px;
+  border-bottom:1px solid var(--border);
+}
+
+.card-header h2{
+  margin:0 0 5px;
+}
+
+.player-line{
+  color:var(--muted);
+  margin-top:8px;
+}
+
+.toolbar{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:15px;
+}
+
+select,
+button{
+  font:inherit;
+}
+
+.round-select{
+  padding:9px 12px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background:white;
+}
+
+.info{
+  background:#fff7ed;
+  border:1px solid #fed7aa;
+  color:#9a3412;
+  padding:12px 15px;
+  border-radius:10px;
+  margin-bottom:15px;
+}
+
+.status-message{
+  padding:12px 15px;
+  background:#eff6ff;
+  color:#1d4ed8;
+  border-radius:10px;
+  margin-bottom:15px;
+}
+
+.match{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 90px 90px minmax(0,1fr) 150px;
+  align-items:center;
+  gap:10px;
+  padding:14px 18px;
+  border-bottom:1px solid var(--border);
+}
+
+.team{
+  font-weight:600;
+}
+
+.team.home{
+  text-align:right;
+}
+
+.team.away{
+  text-align:left;
+}
+
+.score-input{
+  width:72px;
+  height:45px;
+  border:1px solid #cbd5e1;
+  border-radius:9px;
+  text-align:center;
+  font-size:20px;
+  font-weight:700;
+}
+
+.score-input:focus{
+  outline:2px solid #93c5fd;
+  border-color:var(--blue);
+}
+
+.score-input:disabled{
+  background:#f1f5f9;
+  color:#64748b;
+  cursor:not-allowed;
+}
+
+.match-status{
+  text-align:center;
+  font-size:13px;
+  font-weight:700;
+}
+
+.final{
+  color:var(--green);
+}
+
+.live{
+  color:var(--red);
+}
+
+.future{
+  color:#64748b;
+}
+
+.locked{
+  color:#64748b;
+  font-size:12px;
+  display:block;
+  margin-top:2px;
+}
+
+.real-score{
+  display:block;
+  margin-top:3px;
+  font-size:13px;
+  color:#111827;
+}
+
+.saved{
+  color:var(--green);
+  font-size:12px;
+  display:block;
+  margin-top:2px;
+}
+
+.empty{
+  padding:40px;
+  text-align:center;
+  color:var(--muted);
+}
+
+.ranking{
+  width:100%;
+  border-collapse:collapse;
+}
+
+.ranking th,
+.ranking td{
+  padding:14px 16px;
+  border-bottom:1px solid var(--border);
+  text-align:left;
+}
+
+.ranking th{
+  background:#f8fafc;
+}
+
+.ranking td:last-child,
+.ranking th:last-child{
+  text-align:right;
+}
+
+.rank-number{
+  font-weight:800;
+  width:50px;
+}
+
+.points{
+  font-weight:800;
+  font-size:18px;
+}
+
+.my-player{
+  background:#eff6ff;
+}
+
+.change-player{
+  background:#e0e7ff;
+  color:#3730a3;
+  border:0;
+  border-radius:9px;
+  padding:11px 15px;
+  font-weight:700;
+  cursor:pointer;
+}
+
+@media(max-width:800px){
+
+  .match{
+    grid-template-columns:1fr 55px 55px 1fr;
+    gap:6px;
+    padding:12px 10px;
+  }
+
+  .match-status{
+    grid-column:1/-1;
+    grid-row:2;
+    padding-top:4px;
+  }
+
+  .score-input{
+    width:50px;
+    height:40px;
+  }
+
+  header h1{
+    font-size:24px;
+  }
+
+  .tabs{
+    grid-template-columns:1fr;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <div class="header-inner">
+    <h1>⚽ Porra La Liga 2026/27</h1>
+    <p>Marcador exacto = 3 puntos · Resultado correcto = 1 punto · Fallo = 0</p>
+  </div>
+</header>
+
+<div class="container">
+
+  <div class="tabs">
+
+    <button id="tabRound"
+            class="tab active"
+            onclick="showRound()">
+      ⚽ Jornada
+    </button>
+
+    <button id="tabRanking"
+            class="tab"
+            onclick="showRanking()">
+      🏆 Clasificación
+    </button>
+
+    <button class="tab"
+            onclick="changePlayer()">
+      Cambiar jugador
+    </button>
+
+  </div>
+
+  <section id="roundView">
+
+    <div class="card">
+
+      <div class="card-header">
+
+        <div class="toolbar">
+
+          <div>
+            <h2 id="roundTitle">Jornada</h2>
+
+            <div class="player-line">
+              Jugador: <strong id="playerName"></strong>
+            </div>
+          </div>
+
+          <select id="roundSelect"
+                  class="round-select"
+                  onchange="changeRound()">
+          </select>
+
+        </div>
+
+        <div id="message"
+             class="status-message"
+             style="display:none">
+        </div>
+
+        <div class="info">
+          🔒 Las predicciones se bloquean automáticamente
+          cuando comienza cada partido.
+        </div>
+
+      </div>
+
+      <div id="matches"></div>
+
+    </div>
+
+  </section>
+
+
+  <section id="rankingView"
+           style="display:none">
+
+    <div class="card">
+
+      <div class="card-header">
+
+        <h2>🏆 Clasificación</h2>
+
+        <div class="player-line">
+          Los puntos se calculan automáticamente.
+        </div>
+
+      </div>
+
+      <div id="ranking"></div>
+
+    </div>
+
+  </section>
+
+</div>
+
+
+<script>
+
+/* ============================================================
+   SUPABASE
+   ============================================================ */
+
+const SUPABASE_URL =
+  "https://mmrctzpiyycgoiqldtlg.supabase.co";
+
+const SUPABASE_KEY =
+  "PEGA_AQUI_TU_ANON_KEY";
+
+
+/* ============================================================
+   GLOBAL STATE
+   ============================================================ */
+
+let player =
+  localStorage.getItem("porra_player") || "";
+
+let matches = [];
+
+let predictions = [];
+
+let currentRound = 1;
+
+
+/* ============================================================
+   SUPABASE API
+   ============================================================ */
+
+async function api(path, options = {}) {
+
+  const response = await fetch(
+    SUPABASE_URL + path,
+    {
+      ...options,
+
+      headers:{
+        "apikey":SUPABASE_KEY,
+
+        "Authorization":
+          "Bearer " + SUPABASE_KEY,
+
+        "Content-Type":
+          "application/json",
+
+        ...(options.headers || {})
+      }
+    }
+  );
+
+  if(!response.ok){
+
+    const text =
+      await response.text();
+
+    throw new Error(text);
+  }
+
+  const text =
+    await response.text();
+
+  if(!text)
+    return null;
+
+  return JSON.parse(text);
+}
+
+
+/* ============================================================
+   PLAYER
+   ============================================================ */
+
+function ensurePlayer(){
+
+  if(player)
+    return;
+
+  player =
+    prompt("Introduce tu nombre:");
+
+  if(!player)
+    player = "Jugador";
+
+  player =
+    player.trim();
+
+  if(!player)
+    player = "Jugador";
+
+  localStorage.setItem(
+    "porra_player",
+    player
+  );
+}
+
+
+function changePlayer(){
+
+  const newPlayer =
+    prompt(
+      "Introduce tu nombre:",
+      player
+    );
+
+  if(!newPlayer)
+    return;
+
+  const clean =
+    newPlayer.trim();
+
+  if(!clean)
+    return;
+
+  player = clean;
+
+  localStorage.setItem(
+    "porra_player",
+    player
+  );
+
+  renderAll();
+}
+
+
+/* ============================================================
+   LOAD MATCHES
+   ============================================================ */
+
+async function loadMatches(){
+
+  matches =
+    await api(
+      "/rest/v1/matches" +
+      "?select=*" +
+      "&order=matchday.asc,utc_date.asc"
+    );
+
+  if(!Array.isArray(matches))
+    matches = [];
+}
+
+
+/* ============================================================
+   LOAD PREDICTIONS
+   ============================================================ */
+
+async function loadPredictions(){
+
+  predictions =
+    await api(
+      "/rest/v1/predictions" +
+      "?select=*"
+    );
+
+  if(!Array.isArray(predictions))
+    predictions = [];
+}
+
+
+/* ============================================================
+   DATE / STATUS
+   ============================================================ */
+
+function matchDate(match){
+
+  return new Date(
+    match.utc_date
+  );
+}
+
+
+function isStarted(match){
+
+  const status =
+    String(match.status || "")
+      .toUpperCase();
+
+  if([
+    "IN_PLAY",
+    "LIVE",
+    "PAUSED",
+    "FINISHED",
+    "CANCELED",
+    "POSTPONED"
+  ].includes(status))
+    return true;
+
+  return matchDate(match)
+    <= new Date();
+}
+
+
+function getMatchState(match){
+
+  const status =
+    String(match.status || "")
+      .toUpperCase();
+
+  if(
+    status === "FINISHED" ||
+    status === "AWARDED"
+  )
+    return "finished";
+
+  if(
+    status === "IN_PLAY" ||
+    status === "LIVE" ||
+    status === "PAUSED"
+  )
+    return "live";
+
+  if(
+    status === "CANCELED" ||
+    status === "POSTPONED"
+  )
+    return "special";
+
+  if(matchDate(match) <= new Date())
+    return "live";
+
+  return "future";
+}
+
+
+/* ============================================================
+   CURRENT ROUND
+   ============================================================ */
+
+function determineCurrentRound(){
+
+  if(!matches.length){
+    currentRound = 1;
+    return;
+  }
+
+  const rounds =
+    [...new Set(
+      matches
+        .map(m => Number(m.matchday))
+        .filter(Boolean)
+    )]
+    .sort((a,b)=>a-b);
+
+  const active =
+    rounds.find(round =>
+      matches.some(m =>
+        Number(m.matchday) === round &&
+        (
+          getMatchState(m) === "future" ||
+          getMatchState(m) === "live"
+        )
+      )
+    );
+
+  if(active){
+    currentRound = active;
+    return;
+  }
+
+  currentRound =
+    rounds[rounds.length - 1] || 1;
+}
+
+
+/* ============================================================
+   ROUND SELECT
+   ============================================================ */
+
+function buildRoundSelect(){
+
+  const select =
+    document.getElementById(
+      "roundSelect"
+    );
+
+  const rounds =
+    [...new Set(
+      matches
+        .map(m => Number(m.matchday))
+        .filter(Boolean)
+    )]
+    .sort((a,b)=>a-b);
+
+  select.innerHTML = "";
+
+  rounds.forEach(round => {
+
+    const option =
+      document.createElement("option");
+
+    option.value = round;
+
+    option.textContent =
+      "Jornada " + round;
+
+    if(round === currentRound)
+      option.selected = true;
+
+    select.appendChild(option);
+  });
+}
+
+
+function changeRound(){
+
+  currentRound =
+    Number(
+      document.getElementById(
+        "roundSelect"
+      ).value
+    );
+
+  renderRound();
+}
+
+
+/* ============================================================
+   PREDICTION LOOKUP
+   ============================================================ */
+
+function getPrediction(matchId){
+
+  return predictions.find(
+    p =>
+      Number(p.match_id) === Number(matchId) &&
+      String(p.player).toLowerCase() ===
+      String(player).toLowerCase()
+  );
+}
+
+
+/* ============================================================
+   SAVE PREDICTION
+   ============================================================ */
+
+async function savePrediction(
+  matchId,
+  home,
+  away
+){
+
+  const match =
+    matches.find(
+      m => Number(m.id) === Number(matchId)
+    );
+
+  if(!match)
+    return;
+
+  if(isStarted(match)){
+
+    alert(
+      "🔒 Este partido ya ha comenzado."
+    );
+
+    renderRound();
+
+    return;
+  }
+
+  const homeScore =
+    Number(home);
+
+  const awayScore =
+    Number(away);
+
+  if(
+    !Number.isInteger(homeScore) ||
+    !Number.isInteger(awayScore) ||
+    homeScore < 0 ||
+    awayScore < 0
+  )
+    return;
+
+
+  const data = {
+
+    match_id:
+      Number(matchId),
+
+    player:
+      player,
+
+    home_pred:
+      homeScore,
+
+    away_pred:
+      awayScore,
+
+    updated_at:
+      new Date().toISOString()
+  };
+
+
+  try{
+
+    await api(
+      "/rest/v1/predictions" +
+      "?on_conflict=match_id,player",
+      {
+        method:"POST",
+
+        headers:{
+          "Prefer":
+            "resolution=merge-duplicates"
+        },
+
+        body:
+          JSON.stringify(data)
+      }
+    );
+
+    await loadPredictions();
+
+    renderRound();
+
+  }
+  catch(error){
+
+    console.error(error);
+
+    alert(
+      "No se pudo guardar la predicción.\n\n" +
+      error.message
+    );
+  }
+}
+
+
+/* ============================================================
+   SCORE INPUT
+   ============================================================ */
+
+function inputChanged(
+  matchId,
+  side,
+  value
+){
+
+  const homeInput =
+    document.querySelector(
+      `[data-home="${matchId}"]`
+    );
+
+  const awayInput =
+    document.querySelector(
+      `[data-away="${matchId}"]`
+    );
+
+  if(!homeInput || !awayInput)
+    return;
+
+  if(
+    homeInput.value === "" ||
+    awayInput.value === ""
+  )
+    return;
+
+  savePrediction(
+    matchId,
+    homeInput.value,
+    awayInput.value
+  );
+}
+
+
+/* ============================================================
+   FORMAT DATE
+   ============================================================ */
+
+function formatDate(date){
+
+  return new Intl.DateTimeFormat(
+    "es-ES",
+    {
+      day:"2-digit",
+      month:"2-digit",
+      hour:"2-digit",
+      minute:"2-digit"
+    }
+  ).format(date);
+}
+
+
+/* ============================================================
+   RENDER ROUND
+   ============================================================ */
+
+function renderRound(){
+
+  document.getElementById(
+    "roundTitle"
+  ).textContent =
+    "Jornada " + currentRound;
+
+  document.getElementById(
+    "playerName"
+  ).textContent =
+    player;
+
+  const container =
+    document.getElementById(
+      "matches"
+    );
+
+  const roundMatches =
+    matches.filter(
+      m =>
+        Number(m.matchday) ===
+        Number(currentRound)
+    );
+
+  if(!roundMatches.length){
+
+    container.innerHTML =
+      `<div class="empty">
+        No hay partidos en esta jornada.
+      </div>`;
+
+    return;
+  }
+
+
+  container.innerHTML =
+    roundMatches.map(
+      match => {
+
+        const state =
+          getMatchState(match);
+
+        const locked =
+          isStarted(match);
+
+        const prediction =
+          getPrediction(match.id);
+
+        const homePred =
+          prediction
+            ? prediction.home_pred
+            : "";
+
+        const awayPred =
+          prediction
+            ? prediction.away_pred
+            : "";
+
+
+        let statusHtml = "";
+
+        if(state === "finished"){
+
+          statusHtml = `
+            <span class="final">
+              🟢 FINAL
+            </span>
+
+            <span class="real-score">
+              ${match.home_score ?? "-"}
+              -
+              ${match.away_score ?? "-"}
+            </span>
+
+            <span class="locked">
+              🔒 Bloqueada
+            </span>
+          `;
+
+        }
+        else if(state === "live"){
+
+          statusHtml = `
+            <span class="live">
+              🔴 EN DIRECTO
+            </span>
+
+            ${
+              match.home_score !== null &&
+              match.home_score !== undefined
+              ?
+              `<span class="real-score">
+                ${match.home_score} -
+                ${match.away_score}
+              </span>`
+              :
+              ""
+            }
+
+            <span class="locked">
+              🔒 Bloqueada
+            </span>
+          `;
+
+        }
+        else if(state === "special"){
+
+          statusHtml = `
+            <span class="future">
+              ⚪ ${String(match.status || "").toUpperCase()}
+            </span>
+
+            <span class="locked">
+              🔒 No disponible
+            </span>
+          `;
+
+        }
+        else{
+
+          statusHtml = `
+            <span class="future">
+              ⚪ ${formatDate(
+                matchDate(match)
+              )}
+            </span>
+          `;
+        }
+
+
+        return `
+
+          <div class="match">
+
+            <div class="team home">
+              ${escapeHtml(match.home_team)}
+            </div>
+
+            <div>
+
+              <input
+                class="score-input"
+                type="number"
+                min="0"
+                max="30"
+                step="1"
+                value="${homePred}"
+                data-home="${match.id}"
+                ${locked ? "disabled" : ""}
+                onchange="
+                  inputChanged(
+                    ${match.id},
+                    'home',
+                    this.value
+                  )
+                "
+              >
+
+            </div>
+
+            <div>
+
+              <input
+                class="score-input"
+                type="number"
+                min="0"
+                max="30"
+                step="1"
+                value="${awayPred}"
+                data-away="${match.id}"
+                ${locked ? "disabled" : ""}
+                onchange="
+                  inputChanged(
+                    ${match.id},
+                    'away',
+                    this.value
+                  )
+                "
+              >
+
+            </div>
+
+            <div class="team away">
+              ${escapeHtml(match.away_team)}
+            </div>
+
+            <div class="match-status">
+              ${statusHtml}
+
+              ${
+                prediction
+                ? `<span class="saved">
+                    ✓ Predicción guardada
+                  </span>`
+                : ""
+              }
+            </div>
+
+          </div>
+
+        `;
+      }
+    ).join("");
+}
+
+
+/* ============================================================
+   ESCAPE HTML
+   ============================================================ */
+
+function escapeHtml(value){
+
+  return String(value ?? "")
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;")
+    .replace(/'/g,"&#039;");
+}
+
+
+/* ============================================================
+   POINTS
+   ============================================================ */
+
+function outcome(home, away){
+
+  if(home > away)
+    return "H";
+
+  if(home < away)
+    return "A";
+
+  return "D";
+}
+
+
+function calculatePoints(
+  prediction,
+  match
+){
+
+  if(
+    match.home_score === null ||
+    match.home_score === undefined ||
+    match.away_score === null ||
+    match.away_score === undefined
+  )
+    return 0;
+
+
+  if(
+    Number(prediction.home_pred) ===
+      Number(match.home_score) &&
+    Number(prediction.away_pred) ===
+      Number(match.away_score)
+  )
+    return 3;
+
+
+  if(
+    outcome(
+      Number(prediction.home_pred),
+      Number(prediction.away_pred)
+    )
+    ===
+    outcome(
+      Number(match.home_score),
+      Number(match.away_score)
+    )
+  )
+    return 1;
+
+
+  return 0;
+}
+
+
+/* ============================================================
+   RANKING
+   ============================================================ */
+
+async function renderRanking(){
+
+  const container =
+    document.getElementById(
+      "ranking"
+    );
+
+  if(!predictions.length){
+
+    container.innerHTML =
+      `<div class="empty">
+        Todavía no hay predicciones.
+      </div>`;
+
+    return;
+  }
+
+
+  const totals = {};
+
+
+  predictions.forEach(pred => {
+
+    const match =
+      matches.find(
+        m =>
+          Number(m.id) ===
+          Number(pred.match_id)
+      );
+
+    if(!match)
+      return;
+
+
+    const name =
+      String(pred.player).trim();
+
+    if(!name)
+      return;
+
+    if(!totals[name])
+      totals[name] = 0;
+
+    totals[name] +=
+      calculatePoints(
+        pred,
+        match
+      );
+  });
+
+
+  const ranking =
+    Object.entries(totals)
+      .map(
+        ([name,points]) => ({
+          name,
+          points
+        })
+      )
+      .sort(
+        (a,b) =>
+          b.points - a.points ||
+          a.name.localeCompare(
+            b.name,
+            "es"
+          )
+      );
+
+
+  if(!ranking.length){
+
+    container.innerHTML =
+      `<div class="empty">
+        Todavía no hay puntos.
+      </div>`;
+
+    return;
+  }
+
+
+  container.innerHTML = `
+
+    <table class="ranking">
+
+      <thead>
+
+        <tr>
+          <th>#</th>
+          <th>Jugador</th>
+          <th>Puntos</th>
+        </tr>
+
+      </thead>
+
+      <tbody>
+
+        ${ranking.map(
+          (row,index) => `
+
+            <tr class="${
+              row.name.toLowerCase() ===
+              player.toLowerCase()
+              ? "my-player"
+              : ""
+            }">
+
+              <td class="rank-number">
+                ${index + 1}
+              </td>
+
+              <td>
+                ${escapeHtml(row.name)}
+              </td>
+
+              <td class="points">
+                ${row.points}
+              </td>
+
+            </tr>
+
+          `
+        ).join("")}
+
+      </tbody>
+
+    </table>
+
+  `;
+}
+
+
+/* ============================================================
+   TABS
+   ============================================================ */
+
+function showRound(){
+
+  document.getElementById(
+    "roundView"
+  ).style.display = "block";
+
+  document.getElementById(
+    "rankingView"
+  ).style.display = "none";
+
+  document.getElementById(
+    "tabRound"
+  ).classList.add("active");
+
+  document.getElementById(
+    "tabRanking"
+  ).classList.remove("active");
+
+  renderRound();
+}
+
+
+async function showRanking(){
+
+  document.getElementById(
+    "roundView"
+  ).style.display = "none";
+
+  document.getElementById(
+    "rankingView"
+  ).style.display = "block";
+
+  document.getElementById(
+    "tabRound"
+  ).classList.remove("active");
+
+  document.getElementById(
+    "tabRanking"
+  ).classList.add("active");
+
+  await loadPredictions();
+
+  renderRanking();
+}
+
+
+/* ============================================================
+   REFRESH
+   ============================================================ */
+
+async function refresh(){
+
+  try{
+
+    await loadMatches();
+
+    await loadPredictions();
+
+    determineCurrentRound();
+
+    buildRoundSelect();
+
+    renderRound();
+
+    const message =
+      document.getElementById(
+        "message"
+      );
+
+    message.style.display =
+      "block";
+
+    message.textContent =
+      "✓ Resultados sincronizados desde Supabase.";
+
+    setTimeout(
+      () => {
+        message.style.display =
+          "none";
+      },
+      3000
+    );
+
+  }
+  catch(error){
+
+    console.error(error);
+
+    const message =
+      document.getElementById(
+        "message"
+      );
+
+    message.style.display =
+      "block";
+
+    message.textContent =
+      "Error al cargar los datos: " +
+      error.message;
+  }
+}
+
+
+/* ============================================================
+   INITIALIZE
+   ============================================================ */
+
+async function boot(){
+
+  ensurePlayer();
+
+  document.getElementById(
+    "playerName"
+  ).textContent =
+    player;
+
+  await refresh();
+
+
+  /*
+     La web consulta Supabase cada minuto.
+
+     IMPORTANTE:
+     Esto NO consulta ninguna API externa.
+
+     El GitHub Action es quien actualiza
+     Supabase cada hora.
+  */
+
+  setInterval(
+    async () => {
+
+      try{
+
+        await loadMatches();
+
+        await loadPredictions();
+
+        buildRoundSelect();
+
+        renderRound();
+
+      }
+      catch(error){
+
+        console.error(
+          "Refresh:",
+          error
+        );
+      }
+
+    },
+    60000
+  );
+}
+
+
+boot();
+
+</script>
+
+</body>
+</html>
