@@ -1,0 +1,137 @@
+name: Sync La Liga results
+
+on:
+  schedule:
+    # Every 5 minutes
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Sync SofaScore → Supabase
+        env:
+          SUPABASE_URL: https://mmrctzpiyycgoiqldtlg.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          import urllib.error
+
+          SUPABASE_URL = os.environ["SUPABASE_URL"]
+          SUPABASE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+
+          BASE = "https://www.sofascore.com/api/v1"
+          TOURNAMENT = "8"
+          SEASON = "97268"
+
+          headers = {
+              "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+              "Accept": "application/json, text/plain, */*",
+              "Referer": "https://www.sofascore.com/",
+              "Origin": "https://www.sofascore.com",
+              "X-Requested-With": "XMLHttpRequest",
+          }
+
+          def get(url):
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  return json.loads(response.read().decode())
+
+          def supabase(method, path, data=None):
+              url = SUPABASE_URL + path
+
+              h = {
+                  "apikey": SUPABASE_KEY,
+                  "Authorization": "Bearer " + SUPABASE_KEY,
+                  "Content-Type": "application/json",
+                  "Prefer": "resolution=merge-duplicates,return=minimal",
+              }
+
+              body = None
+              if data is not None:
+                  body = json.dumps(data).encode()
+
+              req = urllib.request.Request(
+                  url,
+                  data=body,
+                  headers=h,
+                  method=method
+              )
+
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  text = response.read().decode()
+                  return json.loads(text) if text else None
+
+          print("Consultando SofaScore...")
+
+          # Get all La Liga events for the 2026/27 season
+          events = []
+
+          for round_number in range(1, 39):
+              url = (
+                  f"{BASE}/unique-tournament/{TOURNAMENT}"
+                  f"/season/{SEASON}/events/round/{round_number}"
+              )
+
+              try:
+                  data = get(url)
+                  round_events = data.get("events", [])
+                  events.extend(round_events)
+                  print(f"Jornada {round_number}: {len(round_events)} partidos")
+              except Exception as e:
+                  print(f"Jornada {round_number}: error -> {e}")
+
+          print(f"Total partidos encontrados: {len(events)}")
+
+          # Update Supabase
+          for event in events:
+              home = event.get("homeTeam", {})
+              away = event.get("awayTeam", {})
+
+              home_score = event.get("homeScore", {}).get("current")
+              away_score = event.get("awayScore", {}).get("current")
+
+              status = event.get("status", {}).get("type", "NOT_STARTED")
+
+              start_timestamp = event.get("startTimestamp")
+
+              if not start_timestamp:
+                  continue
+
+              from datetime import datetime, timezone
+
+              utc_date = datetime.fromtimestamp(
+                  start_timestamp,
+                  timezone.utc
+              ).isoformat()
+
+              match = {
+                  "sofascore_id": event["id"],
+                  "matchday": event.get("roundInfo", {}).get("round"),
+                  "home_team": home.get("name"),
+                  "away_team": away.get("name"),
+                  "utc_date": utc_date,
+                  "status": status,
+                  "home_score": home_score,
+                  "away_score": away_score,
+              }
+
+              try:
+                  supabase(
+                      "POST",
+                      "/rest/v1/matches?on_conflict=sofascore_id",
+                      match
+                  )
+              except Exception as e:
+                  print(
+                      f"Error actualizando "
+                      f"{home.get('name')} - {away.get('name')}: {e}"
+                  )
+
+          print("Sincronización terminada.")
+          PY
