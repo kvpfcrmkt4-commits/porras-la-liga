@@ -5,7 +5,7 @@ on:
     # Ejecutar una vez cada hora
     - cron: "0 * * * *"
 
-  # Permite ejecutarlo manualmente desde Actions
+  # Permite ejecutarlo manualmente
   workflow_dispatch:
 
 concurrency:
@@ -16,13 +16,12 @@ jobs:
   sync:
     runs-on: ubuntu-latest
 
-    # Evita que una ejecución se quede colgada
     timeout-minutes: 10
 
     steps:
-      - name: Sync API-Football → Supabase
+      - name: Sync football-data.org → Supabase
         env:
-          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
           SUPABASE_URL: https://mmrctzpiyycgoiqldtlg.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
@@ -37,43 +36,41 @@ jobs:
 
 
           # ============================================================
-          # CONFIGURATION
+          # CONFIGURACIÓN
           # ============================================================
 
-          API_KEY = os.environ["API_FOOTBALL_KEY"]
+          API_URL = "https://api.football-data.org/v4"
+
+          # La Liga
+          COMPETITION = "PD"
+
+          TOKEN = os.environ["FOOTBALL_DATA_TOKEN"]
 
           SUPABASE_URL = os.environ["SUPABASE_URL"]
 
           SUPABASE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
-          API_URL = "https://v3.football.api-sports.io"
-
-          # LaLiga
-          LEAGUE_ID = 140
-
-          # Season 2026/27
-          SEASON = 2026
-
 
           # ============================================================
-          # API-FOOTBALL
+          # GET FOOTBALL-DATA.ORG
           # ============================================================
 
-          def api_get(endpoint, params):
+          def football_data_get(endpoint, params=None):
+
+              if params is None:
+                  params = {}
 
               query = urllib.parse.urlencode(params)
 
-              url = (
-                  API_URL
-                  + endpoint
-                  + "?"
-                  + query
-              )
+              url = API_URL + endpoint
+
+              if query:
+                  url += "?" + query
 
               request = urllib.request.Request(
                   url,
                   headers={
-                      "x-apisports-key": API_KEY,
+                      "X-Auth-Token": TOKEN,
                       "Accept": "application/json"
                   },
                   method="GET"
@@ -93,30 +90,34 @@ jobs:
           # SUPABASE
           # ============================================================
 
-          def supabase_upsert(match):
+          def supabase_request(
+              endpoint,
+              method="GET",
+              data=None,
+              extra_headers=None
+          ):
 
-              url = (
-                  SUPABASE_URL
-                  + "/rest/v1/matches"
-                  + "?on_conflict=api_id"
-              )
+              url = SUPABASE_URL + endpoint
 
               headers = {
                   "apikey": SUPABASE_KEY,
                   "Authorization": "Bearer " + SUPABASE_KEY,
-                  "Content-Type": "application/json",
-                  "Prefer":
-                      "resolution=merge-duplicates,"
-                      "return=minimal"
+                  "Content-Type": "application/json"
               }
 
-              body = json.dumps(match).encode()
+              if extra_headers:
+                  headers.update(extra_headers)
+
+              body = None
+
+              if data is not None:
+                  body = json.dumps(data).encode()
 
               request = urllib.request.Request(
                   url,
                   data=body,
                   headers=headers,
-                  method="POST"
+                  method=method
               )
 
               with urllib.request.urlopen(
@@ -124,7 +125,14 @@ jobs:
                   timeout=30
               ) as response:
 
-                  response.read()
+                  content = response.read()
+
+                  if not content:
+                      return None
+
+                  return json.loads(
+                      content.decode()
+                  )
 
 
           # ============================================================
@@ -133,62 +141,48 @@ jobs:
 
           print("")
           print("========================================")
-          print("      LA LIGA RESULTS SYNCHRONIZER")
+          print("       LA LIGA RESULTS SYNC")
+          print("       football-data.org → Supabase")
           print("========================================")
           print("")
 
-          print("Consultando API-Football...")
-          print(
-              f"Competition: LaLiga ({LEAGUE_ID})"
-          )
-          print(
-              f"Season: {SEASON}/27"
-          )
+          print("Consultando La Liga...")
+          print("Competition: PD")
+          print("Season: ACTIVE")
           print("")
 
 
           # ============================================================
-          # GET FIXTURES
+          # GET ACTIVE SEASON MATCHES
           # ============================================================
 
-          data = api_get(
-              "/fixtures",
-              {
-                  "league": LEAGUE_ID,
-                  "season": SEASON
-              }
+          data = football_data_get(
+              f"/competitions/{COMPETITION}/matches"
           )
 
 
-          # ============================================================
-          # CHECK API ERRORS
-          # ============================================================
-
-          api_errors = data.get("errors", {})
-
-          if api_errors:
-
-              raise Exception(
-                  "API-Football error: "
-                  + json.dumps(api_errors)
-              )
-
-
-          fixtures = data.get(
-              "response",
+          matches = data.get(
+              "matches",
               []
           )
 
 
           print(
-              f"Partidos recibidos: {len(fixtures)}"
+              f"Partidos recibidos: {len(matches)}"
           )
 
           print("")
 
 
+          if not matches:
+
+              raise Exception(
+                  "football-data.org no devolvió partidos."
+              )
+
+
           # ============================================================
-          # UPDATE MATCHES
+          # PROCESS MATCHES
           # ============================================================
 
           updated = 0
@@ -196,58 +190,35 @@ jobs:
           errors = 0
 
 
-          for fixture in fixtures:
+          for match in matches:
 
               try:
 
-                  fixture_info = fixture.get(
-                      "fixture",
-                      {}
-                  )
-
-                  teams = fixture.get(
-                      "teams",
-                      {}
-                  )
-
-                  goals = fixture.get(
-                      "goals",
-                      {}
-                  )
-
-                  league = fixture.get(
-                      "league",
-                      {}
-                  )
-
-                  status_info = fixture_info.get(
-                      "status",
-                      {}
-                  )
-
-
-                  # ----------------------------------------------------
-                  # BASIC INFORMATION
-                  # ----------------------------------------------------
-
-                  fixture_id = fixture_info.get(
-                      "id"
-                  )
-
-                  if not fixture_id:
-                      continue
-
+                  match_id = match.get("id")
 
                   home_team = (
-                      teams
-                      .get("home", {})
+                      match
+                      .get("homeTeam", {})
                       .get("name")
                   )
 
                   away_team = (
-                      teams
-                      .get("away", {})
+                      match
+                      .get("awayTeam", {})
                       .get("name")
+                  )
+
+                  matchday = match.get(
+                      "matchday"
+                  )
+
+                  utc_date = match.get(
+                      "utcDate"
+                  )
+
+                  api_status = match.get(
+                      "status",
+                      "SCHEDULED"
                   )
 
 
@@ -255,11 +226,21 @@ jobs:
                   # SCORE
                   # ----------------------------------------------------
 
-                  home_score = goals.get(
+                  score = match.get(
+                      "score",
+                      {}
+                  )
+
+                  full_time = score.get(
+                      "fullTime",
+                      {}
+                  )
+
+                  home_score = full_time.get(
                       "home"
                   )
 
-                  away_score = goals.get(
+                  away_score = full_time.get(
                       "away"
                   )
 
@@ -268,42 +249,31 @@ jobs:
                   # STATUS
                   # ----------------------------------------------------
 
-                  api_status = status_info.get(
-                      "short",
-                      "NS"
-                  )
-
-
                   if api_status in [
-                      "FT",
-                      "AET",
-                      "PEN"
+                      "FINISHED",
+                      "AWARDED"
                   ]:
 
                       db_status = "FINISHED"
 
-
                   elif api_status in [
-                      "1H",
-                      "HT",
-                      "2H",
-                      "ET",
-                      "BT",
-                      "P"
+                      "IN_PLAY",
+                      "PAUSED",
+                      "LIVE"
                   ]:
 
                       db_status = "IN_PLAY"
 
-
-                  elif api_status == "PST":
+                  elif api_status == "POSTPONED":
 
                       db_status = "POSTPONED"
 
-
-                  elif api_status == "CANC":
+                  elif api_status in [
+                      "CANCELLED",
+                      "SUSPENDED"
+                  ]:
 
                       db_status = "CANCELED"
-
 
                   else:
 
@@ -311,66 +281,13 @@ jobs:
 
 
                   # ----------------------------------------------------
-                  # DATE
+                  # DATA TO SAVE
                   # ----------------------------------------------------
 
-                  timestamp = fixture_info.get(
-                      "timestamp"
-                  )
-
-
-                  if timestamp:
-
-                      utc_date = (
-                          datetime.fromtimestamp(
-                              timestamp,
-                              timezone.utc
-                          )
-                          .isoformat()
-                      )
-
-                  else:
-
-                      utc_date = fixture_info.get(
-                          "date"
-                      )
-
-
-                  # ----------------------------------------------------
-                  # MATCHDAY
-                  # ----------------------------------------------------
-
-                  round_name = league.get(
-                      "round",
-                      ""
-                  )
-
-                  matchday = None
-
-
-                  if "-" in round_name:
-
-                      try:
-
-                          matchday = int(
-                              round_name
-                              .split("-")[-1]
-                              .strip()
-                          )
-
-                      except ValueError:
-
-                          matchday = None
-
-
-                  # ----------------------------------------------------
-                  # SUPABASE OBJECT
-                  # ----------------------------------------------------
-
-                  match = {
+                  row = {
 
                       "api_id":
-                          fixture_id,
+                          match_id,
 
                       "matchday":
                           matchday,
@@ -401,11 +318,22 @@ jobs:
 
 
                   # ----------------------------------------------------
-                  # SAVE
+                  # UPSERT
                   # ----------------------------------------------------
 
-                  supabase_upsert(
-                      match
+                  supabase_request(
+                      "/rest/v1/matches"
+                      "?on_conflict=api_id",
+
+                      method="POST",
+
+                      data=row,
+
+                      extra_headers={
+                          "Prefer":
+                          "resolution=merge-duplicates,"
+                          "return=minimal"
+                      }
                   )
 
 
@@ -416,15 +344,25 @@ jobs:
                   # LOG
                   # ----------------------------------------------------
 
-                  score = (
-                      f"{home_score} - "
-                      f"{away_score}"
-                  )
+                  if (
+                      home_score is not None
+                      and away_score is not None
+                  ):
+
+                      score_text = (
+                          f"{home_score} - "
+                          f"{away_score}"
+                      )
+
+                  else:
+
+                      score_text = "-"
+
 
                   print(
                       f"✓ {home_team} - "
                       f"{away_team} | "
-                      f"{score} | "
+                      f"{score_text} | "
                       f"{db_status}"
                   )
 
@@ -435,12 +373,14 @@ jobs:
 
                   print(
                       f"✗ Error procesando "
-                      f"partido: {error}"
+                      f"{home_team} - "
+                      f"{away_team}: "
+                      f"{error}"
                   )
 
 
           # ============================================================
-          # FINISH
+          # FIN
           # ============================================================
 
           print("")
@@ -449,7 +389,7 @@ jobs:
           print("========================================")
 
           print(
-              f"Partidos actualizados: {updated}"
+              f"Partidos procesados: {updated}"
           )
 
           print(
@@ -458,18 +398,16 @@ jobs:
 
           print("")
 
-          if errors > 0:
+          if errors == 0:
 
               print(
-                  "⚠️ Algunos partidos "
-                  "no pudieron actualizarse."
+                  "✅ Todo correcto."
               )
 
           else:
 
               print(
-                  "✅ Todos los partidos "
-                  "se procesaron correctamente."
+                  "⚠️ Hay partidos con errores."
               )
 
           PY
