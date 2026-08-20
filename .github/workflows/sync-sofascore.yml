@@ -111,7 +111,7 @@ jobs:
               ).isoformat()
 
               match = {
-                  "sofascore_id": event["id"],
+                  "api_id": event["id"],
                   "matchday": event.get("roundInfo", {}).get("round"),
                   "home_team": home.get("name"),
                   "away_team": away.get("name"),
@@ -124,7 +124,7 @@ jobs:
               try:
                   supabase(
                       "POST",
-                      "/rest/v1/matches?on_conflict=sofascore_id",
+                      "/rest/v1/matches?on_conflict=api_id",
                       match
                   )
               except Exception as e:
